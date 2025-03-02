@@ -16,6 +16,14 @@
   *
   ******************************************************************************
   */
+#include "lsm6dsl.h"
+#include "i2c.h"
+#include "timer.h"
+#include <stdbool.h>
+#include <string.h>
+
+volatile bool timer_event = false;
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 //#include "ble_commands.h"
@@ -58,18 +66,93 @@ int main(void)
 
   uint8_t nonDiscoverable = 0;
 
+  // Variables for accelerometer readings
+  int16_t ax, ay, az;
+  int16_t prev_ax, prev_ay, prev_az;
+  // Perform an initial reading of the accelerometer
+  lsm6dsl_read_xyz(&ax, &ay, &az);
+  prev_ax = ax;
+  prev_ay = ay;
+  prev_az = az;
+  // Variables for movement detection.
+  uint32_t no_movement_count = 0;
+  const uint16_t MOVEMENT_THRESHOLD = 1500; // adjustable
+  const uint32_t NO_MOVEMENT_REQUIRED = 1200;  // (1 minute = 60000ms/50ms)
+
+  // lost mode flag
+  bool lost_mode = false;
+
+  setDiscoverability(0);
+
   while (1)
   {
-	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
-	    catchBLE();
-	  }else{
-		  HAL_Delay(1000);
-		  // Send a string to the NORDIC UART service, remember to not include the newline
-		  unsigned char test_str[] = "youlostit BLE test";
-		  updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(test_str)-1, test_str);
-	  }
-	  // Wait for interrupt, only uncomment if low power is needed
-	  //__WFI();
+  
+    // Timer interrupt event
+    if (timer_event) {
+      // --------- Movement Tracking stuff
+      timer_event = false;
+      // get change in acceleration
+      lsm6dsl_read_xyz(&ax, &ay, &az);
+      int16_t diff_x = (int16_t)abs(ax - prev_ax);
+      int16_t diff_y = (int16_t)abs(ay - prev_ay);
+      int16_t diff_z = (int16_t)abs(az - prev_az);
+
+      // check for no movement
+      if ((diff_x < MOVEMENT_THRESHOLD) && (diff_y < MOVEMENT_THRESHOLD) && (diff_z < MOVEMENT_THRESHOLD)) {
+        no_movement_count++;
+        if (no_movement_count % 50 == 0) {
+          printf("Not moving for %ld / %d interrupts\n", no_movement_count, (int)NO_MOVEMENT_REQUIRED);
+        }
+      } else {
+        if (no_movement_count >= 1200) {
+          // disconnect ble and set to non discoverable
+          printf("Moving, disconnecting BLE\n");
+          disconnectBLE();
+          printf("Setting to non discoverable\n");
+          setDiscoverability(0);
+        }
+        no_movement_count = 0;
+        lost_mode = false;
+      }
+      prev_ax = ax;
+      prev_ay = ay;
+      prev_az = az;
+      // check if havent been moving for a minute
+      if (no_movement_count >= NO_MOVEMENT_REQUIRED) {
+        lost_mode = true;
+      }
+
+
+      // ------- BLE stuff
+      if (lost_mode) {
+        // first time in lost mode
+        if (no_movement_count == NO_MOVEMENT_REQUIRED) {
+          printf("Entering lost mode\n");
+          setDiscoverability(1);
+        }
+        // ble given if statement
+        if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
+          catchBLE();
+        }else{
+          if (no_movement_count % 200 == 0) {// 10 seconds at 50ms intervals
+            // Send a string to the NORDIC UART service, remember to not include the newline character
+            unsigned char test_str[60];
+            strcpy((char *)test_str, "PrivTag Unnamed");
+            printf("%s\n", test_str);
+            updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, strlen((char *)test_str), test_str);
+  
+            sprintf((char *)test_str, "Missing for %lus", (no_movement_count - 1200) / 20);
+            printf("%s\n", test_str);
+            updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, strlen((char *)test_str), test_str);
+          }
+        }
+          // Wait for interrupt, only uncomment if low power is needed
+          //__WFI();
+      }
+    }
+
+
+    
   }
 }
 
@@ -168,6 +251,12 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  i2c_init();
+  lsm6dsl_init();
+  timer_init(TIM2);
+  timer_set_ms(TIM2, 100);  // 50 ms timer period -> 20 Hz
+
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
@@ -216,6 +305,13 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void TIM2_IRQHandler(void) {
+  // Check if the update interrupt flag is set.
+  if (TIM2->SR & TIM_SR_UIF) {
+      TIM2->SR &= ~TIM_SR_UIF;
+      timer_event = true;
+  }
+}
 
 /* USER CODE END 4 */
 
@@ -250,3 +346,14 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
+
+// Redefine the libc _write() function so you can use printf in your code
+int _write(int file, char *ptr, int len) {
+  int i = 0;
+  for (i = 0; i < len; i++) {
+      ITM_SendChar(*ptr++);
+  }
+  return len;
+}
+
