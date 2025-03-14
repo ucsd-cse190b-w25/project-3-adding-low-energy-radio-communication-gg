@@ -8,14 +8,12 @@
 #include "i2c.h"
 
 
-void i2c_init() {
-	printf("Init I2C setup\n");
-	
-	// GPIOB
-	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
-	
-	// I2C
-	RCC->APB1ENR1 |= RCC_APB1ENR1_I2C2EN;
+void i2c_init(void) {
+    // 1) Enable GPIO clock
+    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
+
+    // 2) Enable I2C2 clock so we can configure its registers
+    RCC->APB1ENR1 |= RCC_APB1ENR1_I2C2EN;
 	
 	
 	// Source: https://cseweb.ucsd.edu/classes/fa23/cse190-e/docs/stm32l4X-reference-manual.pdf
@@ -86,56 +84,69 @@ void i2c_init() {
 	I2C2->TIMINGR |=  (9 << I2C_TIMINGR_SCLH_Pos);  // Set SCLH = ???
 	
 	I2C2->CR1 |= I2C_CR1_PE;  // Enable I2C2
+
+	// 6) Disable the clock after configuration if you want it off by default
+    //    (The config registers generally retain their values unless the MCU resets or the peripheral is forced reset)
+    RCC->APB1ENR1 &= ~RCC_APB1ENR1_I2C2EN;  
 }
 
 
 uint8_t i2c_transaction(uint8_t address, uint8_t dir, uint8_t* data, uint8_t len) {
-	// printf("I2C transaction: addr: %d, dir: %d, Data: %d_%d, len: %d\n", address, dir, data[0], data[1], len);
-	// Clear any previous configuration
-	I2C2->ICR = I2C_ICR_STOPCF;
-	I2C2->CR2 = 0;
-	
-	// ------ setup ---------
-	// Set the 7-bit slave address
-	I2C2->CR2 |= ((uint32_t)address << 1) & I2C_CR2_SADD;
-	// Set the direction
-	if (dir) {
-		I2C2->CR2 |= I2C_CR2_RD_WRN;
-	}
-	// Set byte count
-	I2C2->CR2 |= ((uint32_t)len << I2C_CR2_NBYTES_Pos);
-	// Enable auto end
-	I2C2->CR2 |= I2C_CR2_AUTOEND;
-	// Start the transfer by generating a START condition.
-	I2C2->CR2 |= I2C_CR2_START;
-	// ------- end setup ---------
-	
-	if (dir == 0) {
-		// writing
-		for (uint8_t i = 0; i < len; i++) {
-			// printf("Writing Iter %d: %d\n", i, data[i]);
-			
-			// Wait for TXIS flag
-			while (!(I2C2->ISR & I2C_ISR_TXIS));
-			// Send
-			I2C2->TXDR = data[i];
-		}
-	} else {
-		// reading
-		for (uint8_t i = 0; i < len; i++) {
-			// Wait for RXNE flag
-			while (!(I2C2->ISR & I2C_ISR_RXNE));
-			// Receive
-			data[i] = I2C2->RXDR;
-		}
-	}
-	
-	// Wait for Stop
-	while (!(I2C2->ISR & I2C_ISR_STOPF));
-	// Clear the stop flag
-	I2C2->ICR = I2C_ICR_STOPCF;
-	
-	
-	return 0;
+    // 🔧 Enable the I2C2 clock
+    RCC->APB1ENR1 |= RCC_APB1ENR1_I2C2EN;
+
+    // If you disabled I2C in i2c_init(), re-enable it now
+    // (i.e., set PE bit if it’s not already set)
+    if ((I2C2->CR1 & I2C_CR1_PE) == 0) {
+        I2C2->CR1 |= I2C_CR1_PE;
+    }
+
+    // ---- Proceed with your transaction logic ----
+    // Clear previous config
+    I2C2->ICR = I2C_ICR_STOPCF;
+    I2C2->CR2 = 0;
+
+    // 7-bit address
+    I2C2->CR2 |= ((uint32_t)address << 1) & I2C_CR2_SADD;
+    
+    // Direction
+    if (dir) {
+        I2C2->CR2 |= I2C_CR2_RD_WRN;  // Read
+    }
+
+    // Number of bytes
+    I2C2->CR2 |= ((uint32_t)len << I2C_CR2_NBYTES_Pos);
+    // Auto-end
+    I2C2->CR2 |= I2C_CR2_AUTOEND;
+    // Start condition
+    I2C2->CR2 |= I2C_CR2_START;
+
+    // Write or read data
+    if (dir == 0) {
+        // Writing
+        for (uint8_t i = 0; i < len; i++) {
+            while (!(I2C2->ISR & I2C_ISR_TXIS));
+            I2C2->TXDR = data[i];
+        }
+    } else {
+        // Reading
+        for (uint8_t i = 0; i < len; i++) {
+            while (!(I2C2->ISR & I2C_ISR_RXNE));
+            data[i] = I2C2->RXDR;
+        }
+    }
+
+    // Wait for STOP
+    while (!(I2C2->ISR & I2C_ISR_STOPF));
+    I2C2->ICR = I2C_ICR_STOPCF;
+
+    // 🔧 Disable the I2C peripheral (optional)
+    I2C2->CR1 &= ~I2C_CR1_PE;
+
+    // 🔧 Gate off I2C2 clock to save power
+    RCC->APB1ENR1 &= ~RCC_APB1ENR1_I2C2EN;
+
+    return 0;
 }
+
 
