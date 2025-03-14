@@ -77,7 +77,7 @@ int main(void)
   // Variables for movement detection.
   uint32_t no_movement_count = 0;
   const uint16_t MOVEMENT_THRESHOLD = 1500; // adjustable
-  const uint32_t NO_MOVEMENT_REQUIRED = 1200;  // (1 minute = 60000ms/50ms)
+  const uint32_t NO_MOVEMENT_REQUIRED = 100;  // (1 minute = 60000ms/50ms)
 
   // lost mode flag
   bool lost_mode = false;
@@ -100,11 +100,11 @@ int main(void)
       // check for no movement
       if ((diff_x < MOVEMENT_THRESHOLD) && (diff_y < MOVEMENT_THRESHOLD) && (diff_z < MOVEMENT_THRESHOLD)) {
         no_movement_count++;
-        if (no_movement_count % 50 == 0) {
+        if (no_movement_count % (NO_MOVEMENT_REQUIRED * 5 / 100) == 0) {
           printf("Not moving for %ld / %d interrupts\n", no_movement_count, (int)NO_MOVEMENT_REQUIRED);
         }
       } else {
-        if (no_movement_count >= 1200) {
+        if (no_movement_count >= NO_MOVEMENT_REQUIRED) {
           // disconnect ble and set to non discoverable
           printf("Moving, disconnecting BLE\n");
           disconnectBLE();
@@ -137,17 +137,17 @@ int main(void)
           if (no_movement_count % 200 == 0) {// 10 seconds at 50ms intervals
             // Send a string to the NORDIC UART service, remember to not include the newline character
             unsigned char test_str[60];
-            strcpy((char *)test_str, "PrivTag Unnamed");
+            strcpy((char *)test_str, "PrivTagObama");
             printf("%s\n", test_str);
             updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, strlen((char *)test_str), test_str);
   
-            sprintf((char *)test_str, "Missing for %lus", (no_movement_count - 1200) / 20);
+            sprintf((char *)test_str, "Missing for %lus", (no_movement_count - NO_MOVEMENT_REQUIRED) / 20);
             printf("%s\n", test_str);
             updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, strlen((char *)test_str), test_str);
           }
         }
           // Wait for interrupt, only uncomment if low power is needed
-          //__WFI();
+          __WFI();
       }
     }
 
