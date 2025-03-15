@@ -88,7 +88,7 @@ int main(void)
     // Variables for movement detection.
     uint32_t no_movement_count = 0;
     const uint16_t MOVEMENT_THRESHOLD = 1500; // adjustable
-    const uint32_t NO_MOVEMENT_REQUIRED = 3; // interrupt every 5 seconds. 12 ticks for 1 minute
+    const uint32_t NO_MOVEMENT_REQUIRED = 12; // interrupt every 5 seconds. 12 ticks for 1 minute
     
     // lost mode flag
     bool lost_mode = false;
