@@ -63,6 +63,17 @@ int main(void)
     ble_init();
     
     HAL_Delay(10);
+
+    // --- set deep sleep --- 
+    // Clear existing LPMS bits
+    PWR->CR1 &= ~PWR_CR1_LPMS;
+    // Set LPMS = 010 for Stop 2
+    PWR->CR1 |= (0x2 << PWR_CR1_LPMS_Pos);
+    SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
+    // Clear the LPR bit in PWR->CR1 (if set)
+    // PWR->CR1 &= ~PWR_CR1_LPR;
+    // --- end set deep sleep ---
+
     
     uint8_t nonDiscoverable = 0;
     
@@ -77,7 +88,7 @@ int main(void)
     // Variables for movement detection.
     uint32_t no_movement_count = 0;
     const uint16_t MOVEMENT_THRESHOLD = 1500; // adjustable
-    const uint32_t NO_MOVEMENT_REQUIRED = 1; // 5 seconds * count, so 12 clicks = 1 minute
+    const uint32_t NO_MOVEMENT_REQUIRED = 3; // interrupt every 5 seconds. 12 ticks for 1 minute
     
     // lost mode flag
     bool lost_mode = false;
@@ -144,12 +155,12 @@ int main(void)
                         updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, strlen((char *)test_str), test_str);
                     }
                 }
-                // Wait for interrupt, only uncomment if low power is needed
-                __WFI();
             }
         }
         
-        
+        // Wait for interrupt, only uncomment if low power is needed
+        if (!lost_mode) __WFI();
+        // exited wfi
         
     }
 }
@@ -252,8 +263,7 @@ static void MX_GPIO_Init(void)
     
     i2c_init();
     lsm6dsl_init();
-    timer_init(TIM2);
-    timer_set_ms(TIM2, 5000 * 2);
+    lptim_init(LPTIM1);
     
     /* USER CODE END MX_GPIO_Init_1 */
     
@@ -303,10 +313,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void TIM2_IRQHandler(void) {
-    // Check if the update interrupt flag is set.
-    if (TIM2->SR & TIM_SR_UIF) {
-        TIM2->SR &= ~TIM_SR_UIF;
+// LPTIM1 interrupt handler
+void LPTIM1_IRQHandler(void)
+{
+    // check for armie match interrupt flag
+    if (LPTIM1->ISR & LPTIM_ISR_ARRM) {
+        LPTIM1->ICR = LPTIM_ICR_ARRMCF;  // Clear the ARR flag
         timer_event = true;
     }
 }

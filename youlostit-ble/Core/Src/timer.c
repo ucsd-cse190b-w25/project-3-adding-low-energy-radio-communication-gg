@@ -8,48 +8,59 @@
 #include "timer.h"
 
 
-void timer_init(TIM_TypeDef* timer)
+void lptim_init(LPTIM_TypeDef *lptim)
 {
+    // 💡 Enable clock for LPTIM1 (assume we're using LPTIM1)
+    RCC->APB1ENR1 |= RCC_APB1ENR1_LPTIM1EN;
     
-    RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;  // Enable clock for TIM2
-    timer->CR1 = 0x0;
+    // 🔧 Disable LPTIM before configuration
+    lptim->CR &= ~LPTIM_CR_ENABLE;
     
-    timer->CNT = 0;
-    timer->SR = 0;
-    timer->DIER = 0;
-    timer->PSC = 0;
-    timer->ARR = 0xFFFFFFFF;
+    // 💯 Enable the LSI oscillator
+    RCC->CSR |= RCC_CSR_LSION;
+    while (!(RCC->CSR & RCC_CSR_LSIRDY)) {
+        // Wait until LSI is ready
+    }
     
-    timer->DIER |= 0x1; // enable "Update Interrupt"
+    // 💯 Select LSI as the clock source for LPTIM1
+    // Clear the LPTIM1 clock selection bits and set them for LSI.
+    RCC->CCIPR &= ~RCC_CCIPR_LPTIM1SEL;
+    RCC->CCIPR |= RCC_CCIPR_LPTIM1SEL_0;  // Assuming '01' selects LSI (check datasheet!)
+
+
+
+    // For example, no prescaler (division factor = 1)
+    // Clear the prescaler bits
+    lptim->CFGR &= ~LPTIM_CFGR_PRESC;
+    // Set prescaler to /128 (0b111 for PRESC bits)
+    lptim->CFGR &= ~LPTIM_CFGR_PRESC;                   // Clear prescaler bits
+    lptim->CFGR |= (0x7 << LPTIM_CFGR_PRESC_Pos);         // Set PRESC to 0b111 for /128
+
+
     
-    // Configure interrupt controller (NVIC) for TIM2
-    NVIC_SetPriority(TIM2_IRQn, 2);  // Set priority (lower value = higher priority)
-    NVIC_EnableIRQ(TIM2_IRQn);       // Enable TIM2 interrupt in NVIC
+
+    // 6) Enable ARRM interrupt
+    lptim->IER |= LPTIM_IER_ARRMIE;
+
     
+    // Configure NVIC for LPTIM1 interrupt
+    NVIC_SetPriority(LPTIM1_IRQn, 2);
+    NVIC_EnableIRQ(LPTIM1_IRQn);
     
-    TIM2->PSC = 3999;  // Set prescaler to divide clock by 4000 (because 4mhz clock -> 1ms tick rate
-    
-    TIM2->ARR = 999;  // Set auto-reload value for 1-second period
-    
-    TIM2->CR1 |= TIM_CR1_CEN;  // Enable the timer
+    // Enable LPTIM and start the counter in continuous mode
+    lptim->CR |= LPTIM_CR_ENABLE;
+
+    // The LPTIM_ARR register must only be modified when the LPTIM is enabled (ENABLE bit set to ‘1’)
+    // Set auto-reload value for a 5-second period
+    lptim->ARR = 1249;  // (250 Hz * 5 sec) - 1 = 1249
+
+
+    lptim->CR |= LPTIM_CR_CNTSTRT;
+
     
 }
 
-void timer_reset(TIM_TypeDef* timer)
-{
-    timer->CNT = 0;
-    
-}
 
-void timer_set_ms(TIM_TypeDef* timer, uint16_t period_ms)
-{
-    timer->CR1 = 0;
-    
-    // Change ARR
-    timer->ARR = period_ms - 1;  // ARR counts from 0 to period_ms - 1
-    
-    timer->EGR = TIM_EGR_UG;  // Force an update event to load PSC and ARR
-    
-    timer->CR1 |= TIM_CR1_CEN;  // Enable the timer
-    
-}
+void timer_reset(TIM_TypeDef* timer) {}
+
+void timer_set_ms(TIM_TypeDef* timer, uint16_t period_ms) {}
